@@ -1,17 +1,21 @@
 //! Rune view for the Anyinstaller packager GUI.
 
 use rune::tok::motion;
-use rune::{col, el, row, spacer, text, text_input, Color, Cx, El, ScrollSpec, TextStyle};
+use rune::{
+    col, el, row, spacer, text as rune_text, text_input, Color, Cx, Direction, El, ScrollSpec,
+    TextStyle,
+};
 
 use crate::app::{MarketDownload, State, DEFAULT_TIMESTAMP_URL};
 use crate::build_job::LogKind;
+use crate::i18n::{self, Language};
 use crate::market::{self, ComponentKind};
 use crate::model::{
     BackgroundMaterial, BackgroundMode, BuildPhase, NoticeTone, PathTarget, RegionStatus, SignMode,
     Step, UiField,
 };
 
-const DISPLAY: TextStyle = TextStyle::new(23.0, 650.0);
+const DISPLAY: TextStyle = TextStyle::new(22.0, 650.0);
 const CARD_TITLE: TextStyle = TextStyle::new(14.0, 600.0);
 const BODY: TextStyle = TextStyle::new(12.5, 400.0);
 const BODY_MEDIUM: TextStyle = TextStyle::new(12.5, 550.0);
@@ -84,8 +88,15 @@ enum BoolField {
 }
 
 pub fn view(state: &State, _: &mut Cx<State>) -> El {
+    i18n::set_current(state.language);
     let p = Paint::dark();
+    let direction = if state.language.is_rtl() {
+        Direction::Rtl
+    } else {
+        Direction::Ltr
+    };
     row()
+        .dir(direction)
         .w_full()
         .h_full()
         .fill(p.bg)
@@ -108,6 +119,10 @@ pub fn view(state: &State, _: &mut Cx<State>) -> El {
         )
 }
 
+fn text(content: impl Into<String>) -> El {
+    rune_text(i18n::tr(&content.into()))
+}
+
 fn sidebar(state: &State, p: Paint) -> El {
     let mut nav = col().w_full().gap(6.0);
     for step in Step::ALL {
@@ -115,11 +130,11 @@ fn sidebar(state: &State, p: Paint) -> El {
     }
 
     col()
-        .w(226.0)
+        .w(210.0)
         .h_full()
-        .px(18.0)
-        .py(22.0)
-        .gap(22.0)
+        .px(16.0)
+        .py(18.0)
+        .gap(18.0)
         .fill(p.sidebar)
         .border(1.0, p.border)
         .child(
@@ -146,7 +161,7 @@ fn sidebar(state: &State, p: Paint) -> El {
             row()
                 .justify_between()
                 .center_y()
-                .child(text("WORKFLOW").font(MONO_SMALL).color(p.faint))
+                .child(text("工作流程").font(MONO_SMALL).color(p.faint))
                 .child(pill(p, "AIP v1", p.info)),
         )
         .child(nav)
@@ -160,13 +175,13 @@ fn sidebar(state: &State, p: Paint) -> El {
                 .radius(10.0)
                 .fill(p.surface)
                 .border(1.0, p.border)
-                .child(text("WINDOWS 10 / 11").font(MONO_SMALL).color(p.muted))
+                .child(text("Windows 10 / 11").font(MONO_SMALL).color(p.muted))
                 .child(
                     row()
                         .gap(7.0)
                         .center_y()
                         .child(dot(p.success, 6.0))
-                        .child(text("单文件 · Authenticode").font(CAPTION).color(p.text)),
+                        .child(text("单文件 · Windows").font(CAPTION).color(p.text)),
                 ),
         )
 }
@@ -176,12 +191,12 @@ fn settings_nav_item(state: &State, p: Paint) -> El {
     let mut item = row()
         .key("settings-nav")
         .role("button")
-        .label("设置")
+        .label(i18n::tr("设置"))
         .focusable(true)
         .w_full()
-        .h(48.0)
-        .px(11.0)
-        .gap(11.0)
+        .h(44.0)
+        .px(10.0)
+        .gap(10.0)
         .center_y()
         .radius(9.0)
         .hover(if active {
@@ -208,17 +223,18 @@ fn settings_nav_item(state: &State, p: Paint) -> El {
                     .font(BODY_MEDIUM)
                     .color(if active { p.text } else { p.muted }),
             )
-            .child(
-                text("GitHub 加速与自动检测")
-                    .font(CAPTION)
-                    .color(if active { p.muted } else { p.faint }),
-            ),
+            .child(text("出口 IP 与自动检测").font(CAPTION).color(if active {
+                p.muted
+            } else {
+                p.faint
+            })),
     )
 }
 
 fn step_nav_item(state: &State, p: Paint, step: Step) -> El {
     let active = state.step == step;
     let errors = state.step_issue_count(step);
+    let title = i18n::tr(step.title());
     let marker_color = if active {
         p.accent
     } else if errors > 0 {
@@ -229,12 +245,12 @@ fn step_nav_item(state: &State, p: Paint, step: Step) -> El {
     let mut item = row()
         .key(format!("step-{}", step.index()))
         .role("button")
-        .label(step.title())
+        .label(title.clone())
         .focusable(true)
         .w_full()
-        .h(56.0)
-        .px(11.0)
-        .gap(11.0)
+        .h(48.0)
+        .px(10.0)
+        .gap(10.0)
         .center_y()
         .radius(9.0)
         .hover(if active {
@@ -309,9 +325,9 @@ fn header(state: &State, p: Paint) -> El {
 
     row()
         .w_full()
-        .h(92.0)
-        .px(24.0)
-        .py(16.0)
+        .h(82.0)
+        .px(20.0)
+        .py(13.0)
         .justify_between()
         .center_y()
         .border_sides([0.0, 0.0, 1.0, 0.0], p.border)
@@ -322,11 +338,7 @@ fn header(state: &State, p: Paint) -> El {
                     row()
                         .gap(9.0)
                         .center_y()
-                        .child(
-                            text("AIP // PACKAGE AUTHORING")
-                                .font(MONO_SMALL)
-                                .color(p.accent),
-                        )
+                        .child(text("AIP // 打包工作台").font(MONO_SMALL).color(p.accent))
                         .child(dot(p.border_strong, 3.0))
                         .child(text(state.step.title()).font(MONO_SMALL).color(p.faint)),
                 )
@@ -340,7 +352,6 @@ fn editor(state: &State, p: Paint) -> El {
     let content = match state.step {
         Step::App => app_step(state, p),
         Step::Defaults => defaults_step(state, p),
-        Step::Market => market_step(state, p),
         Step::Inputs => inputs_step(state, p),
         Step::Package => package_step(state, p),
         Step::Settings => settings_page(state, p),
@@ -421,7 +432,7 @@ fn app_step(state: &State, p: Paint) -> El {
                 ));
             }
             background_details = background_details
-                .child(text("WINDOWS MATERIAL").font(MONO_SMALL).color(p.faint))
+                .child(text("Windows 材质").font(MONO_SMALL).color(p.faint))
                 .child(materials)
                 .child(info_box(
                     p,
@@ -474,7 +485,6 @@ fn app_step(state: &State, p: Paint) -> El {
             .child(background_modes)
             .child(background_details),
         )
-        .child(config_preview(state, p))
 }
 
 fn defaults_step(state: &State, p: Paint) -> El {
@@ -559,11 +569,37 @@ fn defaults_step(state: &State, p: Paint) -> El {
         )
 }
 
-fn market_step(state: &State, p: Paint) -> El {
-    let mut components = col().w_full().gap(12.0);
+fn market_components_card(state: &State, p: Paint) -> El {
+    let mut components = col().w_full().gap(10.0);
     let mut contribute = String::new();
+    let mut catalog_title = "组件市场".to_string();
+    let mut catalog_subtitle =
+        "从 jsDelivr 读取目录，从 GitHub Release 下载，并校验 SHA-256。".to_string();
     if let Some(catalog) = &state.catalog {
         contribute = catalog.marketplace.contribute.clone();
+        catalog_title = if catalog.marketplace.name == "Anyinstaller Client & Backend Marketplace" {
+            i18n::tr("Anyinstaller 客户端与后端市场")
+        } else {
+            i18n::tr(&catalog.marketplace.name)
+        };
+        if !catalog.marketplace.description.is_empty() {
+            let description = if catalog.marketplace.description
+                == "AIP v1 clients, backends, and stubs distributed through GitHub Releases."
+            {
+                i18n::tr("通过 GitHub Release 分发的 AIP v1 客户端、后端与 stub。")
+            } else {
+                i18n::tr(&catalog.marketplace.description)
+            };
+            catalog_subtitle = format!(
+                "{}{}",
+                description,
+                if catalog.updated.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {}", catalog.updated)
+                }
+            );
+        }
         for component in &catalog.components {
             components = components.child(component_card(
                 state,
@@ -576,9 +612,9 @@ fn market_step(state: &State, p: Paint) -> El {
         components = components.child(info_box(
             p,
             if state.catalog_loading {
-                "正在通过 jsDelivr 获取 catalog.toml..."
+                "正在通过 jsDelivr 获取组件目录..."
             } else {
-                "还没有载入市场目录。点击“刷新目录”重试。"
+                "尚未载入组件目录。"
             },
             if state.catalog_loading {
                 p.info
@@ -588,101 +624,16 @@ fn market_step(state: &State, p: Paint) -> El {
         ));
     }
 
-    let (region_color, region_detail) = match &state.region_status {
-        RegionStatus::Domestic { .. } => (p.success, "国内出口 · 加速可用"),
-        RegionStatus::Overseas { .. } => (p.info, "海外出口 · 可直连"),
-        RegionStatus::Checking => (p.warning, "正在自动检测"),
-        RegionStatus::Failed(_) => (p.danger, "检测失败 · 可手动设置"),
-        RegionStatus::Unknown => (p.faint, "启动时自动检测"),
-    };
-    let network_card = card(
-        p,
-        "下载网络",
-        "GitHub 加速、出口 IP 检测与自动配置已集中到独立设置页。",
-    )
-    .child(
-        row()
-            .w_full()
-            .gap(10.0)
-            .center_y()
-            .child(dot(region_color, 8.0))
-            .child(
-                text(state.region_status.label())
-                    .font(BODY_MEDIUM)
-                    .color(p.text)
-                    .grow(1.0)
-                    .truncate(),
-            )
-            .child(pill(p, region_detail, region_color))
-            .child(button_tx(
-                p,
-                "market-open-settings",
-                "打开设置",
-                ButtonKind::Secondary,
-                |s: &mut State, _tx| s.open_settings(),
-            )),
-    )
-    .child(
+    let mut section = card(p, &catalog_title, &catalog_subtitle).child(
         row()
             .w_full()
             .justify_between()
             .center_y()
+            .gap(10.0)
             .child(
-                text(format!(
-                    "GitHub Release 加速：{}",
-                    if state.accelerator_enabled {
-                        "已启用"
-                    } else {
-                        "已关闭"
-                    }
-                ))
-                .font(CAPTION)
-                .color(p.muted),
-            )
-            .child(
-                text("设置保存在本机，不写入 AIP config.toml。")
+                text("选择市场组件后会自动填入下方运行组件路径。")
                     .font(CAPTION)
                     .color(p.faint),
-            ),
-    );
-
-    let catalog_source = market::CATALOG_URL.to_string();
-    let (catalog_title, catalog_subtitle) = state
-        .catalog
-        .as_ref()
-        .map(|catalog| {
-            let updated = if catalog.updated.is_empty() {
-                String::new()
-            } else {
-                format!(" · updated {}", catalog.updated)
-            };
-            (
-                catalog.marketplace.name.clone(),
-                if catalog.marketplace.description.is_empty() {
-                    format!("目录走 jsDelivr，组件 ZIP 走 GitHub Release{updated}")
-                } else {
-                    format!("{}{updated}", catalog.marketplace.description)
-                },
-            )
-        })
-        .unwrap_or_else(|| {
-            (
-                "组件目录".into(),
-                "目录走 jsDelivr，组件 ZIP 走 GitHub Release，并在下载后校验 SHA-256。".into(),
-            )
-        });
-    let mut catalog_card = card(p, &catalog_title, &catalog_subtitle).child(
-        row()
-            .w_full()
-            .justify_between()
-            .center_y()
-            .gap(12.0)
-            .child(
-                text(catalog_source)
-                    .font(MONO_SMALL)
-                    .color(p.muted)
-                    .grow(1.0)
-                    .truncate(),
             )
             .child(button_tx(
                 p,
@@ -690,32 +641,32 @@ fn market_step(state: &State, p: Paint) -> El {
                 if state.catalog_loading {
                     "刷新中…"
                 } else {
-                    "刷新目录"
+                    "刷新市场"
                 },
                 ButtonKind::Secondary,
                 |s: &mut State, _tx| s.refresh_catalog(),
             )),
     );
     if let Some(error) = &state.catalog_error {
-        catalog_card = catalog_card.child(warning_box(p, error, p.danger));
+        section = section.child(warning_box(p, error, p.danger));
     }
-    catalog_card = catalog_card.child(components);
+    section = section.child(components);
     if !contribute.is_empty() {
         let url = contribute;
-        catalog_card = catalog_card.child(
+        section = section.child(
             row()
                 .w_full()
                 .justify_between()
                 .center_y()
                 .child(
-                    text("客户端或后端作者可以通过 PR 添加自己的 Release 条目。")
+                    text("组件作者可以通过 PR 提交 Release 条目。")
                         .font(CAPTION)
                         .color(p.faint),
                 )
                 .child(button_tx(
                     p,
                     "market-contribute",
-                    "打开贡献指南",
+                    "贡献说明",
                     ButtonKind::Ghost,
                     move |_: &mut State, tx| {
                         let _ = tx.open_url(&url);
@@ -723,20 +674,39 @@ fn market_step(state: &State, p: Paint) -> El {
                 )),
         );
     }
+    section
+}
 
-    col()
-        .w_full()
-        .gap(16.0)
-        .child(network_card)
-        .child(catalog_card)
+fn language_card(state: &State, p: Paint) -> El {
+    let mut rows = col().w_full().gap(7.0);
+    for chunk in Language::ALL.chunks(3) {
+        let mut items = row().w_full().gap(7.0);
+        for language in chunk {
+            items = items.child(segment_tx(
+                p,
+                &format!("language-{}", language.code()),
+                language.native_name(),
+                state.language == *language,
+                move |s: &mut State, tx| s.set_language(*language, tx),
+            ));
+        }
+        rows = rows.child(items);
+    }
+    card(p, "界面语言", "语言切换会立即生效，并保存在本机设置中。").child(rows)
 }
 
 fn settings_page(state: &State, p: Paint) -> El {
     let (region_color, region_detail) = match &state.region_status {
-        RegionStatus::Domestic { .. } => (p.success, "CN · 已按默认策略启用加速"),
-        RegionStatus::Overseas { .. } => (p.info, "海外出口 · 默认直连"),
-        RegionStatus::Checking => (p.warning, "正在请求 ipwho.is..."),
-        RegionStatus::Failed(_) => (p.danger, "检测失败 · 可手动配置"),
+        RegionStatus::Domestic { fallback, .. } => (
+            p.success,
+            if *fallback {
+                "ipwho.is 不可用 · 默认国内"
+            } else {
+                "国内 · 自动开启"
+            },
+        ),
+        RegionStatus::Overseas { .. } => (p.info, "海外 · 自动关闭"),
+        RegionStatus::Checking => (p.warning, "正在检测"),
         RegionStatus::Unknown => (p.faint, "等待自动检测"),
     };
     let market_status = if state.catalog_loading {
@@ -749,10 +719,10 @@ fn settings_page(state: &State, p: Paint) -> El {
         "市场目录尚未加载"
     };
 
-    let mut network_card = card(
+    let network_card = card(
         p,
-        "GitHub 网络与出口 IP",
-        "启动时自动检测出口地区；中国 CN 首次默认启用 gh.meali.top。",
+        "出口 IP 与下载线路",
+        "自动检测当前出口 IP；国内开启 GitHub 加速，海外自动关闭；ipwho.is 不可用时默认按国内处理。",
     )
     .child(
         row()
@@ -769,6 +739,7 @@ fn settings_page(state: &State, p: Paint) -> El {
             )
             .child(pill(p, region_detail, region_color)),
     )
+    .child(setting_path_row(p, "当前出口 IP", &state.region_status.ip()))
     .child(
         row()
             .w_full()
@@ -789,7 +760,7 @@ fn settings_page(state: &State, p: Paint) -> El {
     .child(setting_field(
         p,
         "settings-accelerator-prefix",
-        "GitHub 加速前缀",
+        "下载加速前缀",
         &state.accelerator_prefix_edit,
         state.accelerator_error.as_deref(),
         |s| &mut s.accelerator_prefix_edit,
@@ -797,8 +768,8 @@ fn settings_page(state: &State, p: Paint) -> El {
     .child(switch_row(
         p,
         "settings-toggle-acceleration",
-        "启用 GitHub Release 加速",
-        "优先走加速地址；失败或 SHA-256 不匹配时自动回退 GitHub 直连。",
+        "使用 GitHub 下载加速",
+        "国内自动开启，海外自动关闭；仍可手动覆盖。下载失败时回退 GitHub 直连。",
         state.accelerator_enabled,
         BoolField::Acceleration,
     ))
@@ -820,10 +791,6 @@ fn settings_page(state: &State, p: Paint) -> El {
                 |s: &mut State, tx| s.run_auto_detection(tx),
             )),
     );
-    if let RegionStatus::Failed(error) = &state.region_status {
-        network_card = network_card.child(warning_box(p, error, p.danger));
-    }
-
     let settings_path = crate::settings::settings_path();
     let cache_path = market::cache_root();
     col()
@@ -837,7 +804,7 @@ fn settings_page(state: &State, p: Paint) -> El {
                 .child(
                     col()
                         .gap(2.0)
-                        .child(text("PREFERENCES").font(MONO_SMALL).color(p.accent))
+                        .child(text("偏好设置").font(MONO_SMALL).color(p.accent))
                         .child(
                             text(state.autodetect_note.clone())
                                 .font(CAPTION)
@@ -846,12 +813,13 @@ fn settings_page(state: &State, p: Paint) -> El {
                 )
                 .child(button(
                     p,
-                    "settings-back-market",
-                    "返回市场",
+                    "settings-back-inputs",
+                    "返回运行组件",
                     ButtonKind::Ghost,
-                    |s: &mut State| s.set_step(Step::Market),
+                    |s: &mut State| s.set_step(Step::Inputs),
                 )),
         )
+        .child(language_card(state, p))
         .child(network_card)
         .child(
             card(
@@ -936,8 +904,10 @@ fn component_card(
         component.repository.clone()
     } else {
         format!(
-            "{}  ·  source {}",
-            component.repository, component.source_repository
+            "{}  ·  {} {}",
+            component.repository,
+            i18n::tr("源码"),
+            component.source_repository
         )
     };
 
@@ -983,66 +953,53 @@ fn component_card(
 
     let mut card_body = col()
         .w_full()
-        .gap(12.0)
-        .padding(16.0)
-        .radius(10.0)
+        .gap(7.0)
+        .padding(10.0)
+        .radius(8.0)
         .fill(p.surface_high)
         .border(1.0, p.border)
+        .help(i18n::tr(&component.description))
         .child(
             row()
                 .w_full()
-                .gap(9.0)
+                .gap(7.0)
                 .center_y()
                 .child(
                     text(component.name.clone())
-                        .font(CARD_TITLE)
+                        .font(BODY_MEDIUM)
                         .color(p.text)
-                        .grow(1.0),
+                        .grow(1.0)
+                        .truncate(),
                 )
+                .child(pill(p, &format!("v{}", component.version), p.info))
                 .child(pill(p, component.kind.label(), kind_color))
+                .child(pill(p, &component.license, p.success))
                 .child(if component.official {
-                    pill(p, "OFFICIAL", p.accent)
+                    pill(p, "官方", p.accent)
                 } else {
-                    pill(p, "COMMUNITY", p.muted)
+                    pill(p, "社区", p.muted)
                 }),
         )
         .child(
             row()
                 .w_full()
-                .gap(9.0)
+                .justify_between()
+                .gap(10.0)
                 .center_y()
-                .child(pill(p, &format!("v{}", component.version), p.info))
-                .child(pill(p, &component.license, p.success))
                 .child(
                     text(source)
-                        .font(MONO_SMALL)
+                        .font(CAPTION)
                         .color(p.faint)
                         .grow(1.0)
                         .truncate(),
-                ),
-        )
-        .child(
-            text(component.description.clone())
-                .font(CAPTION)
-                .color(p.muted)
-                .wrap(),
+                )
+                .child(actions),
         );
     if let Some(download) = active_download.filter(|download| download.component_id == component.id)
     {
         card_body = card_body.child(download_progress(p, download));
     }
-    card_body.child(
-        row()
-            .w_full()
-            .justify_between()
-            .center_y()
-            .child(
-                text("选择后仍可在构建输入页改回本机路径。")
-                    .font(CAPTION)
-                    .color(p.faint),
-            )
-            .child(actions),
-    )
+    card_body
 }
 
 fn download_progress(p: Paint, download: &MarketDownload) -> El {
@@ -1094,6 +1051,7 @@ fn setting_field(
     } else {
         p.border_strong
     };
+    let label = i18n::tr(label);
     col()
         .w_full()
         .gap(7.0)
@@ -1101,7 +1059,7 @@ fn setting_field(
             row()
                 .justify_between()
                 .center_y()
-                .child(text(label).font(LABEL).color(p.text))
+                .child(text(label.clone()).font(LABEL).color(p.text))
                 .child(if let Some(error) = error {
                     text(error).font(CAPTION).color(p.danger).truncate()
                 } else {
@@ -1113,12 +1071,12 @@ fn setting_field(
         .child(
             text_input(edit, BODY)
                 .key(key)
-                .label(label)
+                .label(label.clone())
                 .single_line()
                 .w_full()
-                .h(40.0)
-                .px(12.0)
-                .py(10.0)
+                .h(36.0)
+                .px(10.0)
+                .py(8.0)
                 .radius(8.0)
                 .fill(p.field)
                 .border(1.0, border)
@@ -1150,7 +1108,7 @@ fn inputs_step(state: &State, p: Paint) -> El {
     let mut card_exec = card(
         p,
         "运行组件",
-        "GUI 会把三个 PE 文件同步为构建目录中的固定文件名。",
+        "界面会把 stub、client、backend 同步为构建目录中的固定文件名。",
     );
     card_exec = card_exec
         .child(path_field(
@@ -1158,7 +1116,7 @@ fn inputs_step(state: &State, p: Paint) -> El {
             state,
             "field-stub",
             "stub.exe",
-            "必须是不带现有 Authenticode 证书表的 unsigned stub",
+            "必须是不带现有 Authenticode 证书表的未签名 stub",
             &state.stub_edit,
             r"stub\target\release\stub.exe",
             PathTarget::Stub,
@@ -1209,44 +1167,42 @@ fn inputs_step(state: &State, p: Paint) -> El {
                 .child(
                     col()
                         .gap(2.0)
-                        .child(text("AUTO DISCOVERY").font(MONO_SMALL).color(p.accent))
+                        .child(text("自动定位").font(MONO_SMALL).color(p.accent))
                         .child(text(auto_note).font(CAPTION).color(p.muted)),
                 )
-                .child(button_tx(
-                    p,
-                    "auto-detect",
-                    "重新自动定位",
-                    ButtonKind::Secondary,
-                    |s: &mut State, tx| s.auto_detect(Some(tx)),
-                )),
-        )
-        .child(
-            card(
-                p,
-                "构建目录",
-                "config.toml 与固定命名的输入文件会写入这里；输出必须在目录外。",
-            )
-            .child(path_field(
-                p,
-                state,
-                "field-build-dir",
-                "构建目录",
-                "目录不存在时会自动创建",
-                &state.build_dir_edit,
-                r"target\gui-build",
-                PathTarget::BuildDir,
-                state
-                    .issue(UiField::BuildDir)
-                    .map(|issue| issue.message.as_str()),
-                |s| &mut s.build_dir_edit,
-            )),
+                .child(
+                    row()
+                        .gap(7.0)
+                        .child(button_tx(
+                            p,
+                            "auto-detect",
+                            "重新定位",
+                            ButtonKind::Secondary,
+                            |s: &mut State, tx| s.auto_detect(Some(tx)),
+                        ))
+                        .child(button_tx(
+                            p,
+                            "import-custom-component",
+                            "导入自定义",
+                            ButtonKind::Secondary,
+                            |s: &mut State, tx| s.browse(tx, PathTarget::ImportCustomComponent),
+                        ))
+                        .child(button_tx(
+                            p,
+                            "inputs-open-settings",
+                            "网络设置",
+                            ButtonKind::Ghost,
+                            |s: &mut State, _tx| s.open_settings(),
+                        )),
+                ),
         )
         .child(card_exec)
+        .child(market_components_card(state, p))
         .child(
             card(
                 p,
                 "载荷与客户端资源",
-                "payload.zip 是安装内容；客户端 assets 会递归合并到 build/assets。",
+                "payload.zip 是安装载荷；客户端 assets 会递归合并到 build/assets。",
             )
             .child(path_field(
                 p,
@@ -1267,8 +1223,8 @@ fn inputs_step(state: &State, p: Paint) -> El {
                 p,
                 state,
                 "field-client-assets",
-                "client assets 目录（可选）",
-                "PyInstaller onedir 的 assets 目录，内容会合并进构建资源",
+                "客户端资源目录（assets，可选）",
+                "PyInstaller 目录式构建的 assets 目录，内容会合并进构建资源",
                 &state.client_assets_edit,
                 r"voidclient\dist\client\assets",
                 PathTarget::ClientAssets,
@@ -1276,6 +1232,27 @@ fn inputs_step(state: &State, p: Paint) -> El {
                     .issue(UiField::ClientAssets)
                     .map(|issue| issue.message.as_str()),
                 |s| &mut s.client_assets_edit,
+            )),
+        )
+        .child(
+            card(
+                p,
+                "构建目录",
+                "config.toml 与固定命名的输入文件会写入这里；输出必须在目录外。",
+            )
+            .child(path_field(
+                p,
+                state,
+                "field-build-dir",
+                "构建目录",
+                "目录不存在时会自动创建",
+                &state.build_dir_edit,
+                r"target\gui-build",
+                PathTarget::BuildDir,
+                state
+                    .issue(UiField::BuildDir)
+                    .map(|issue| issue.message.as_str()),
+                |s| &mut s.build_dir_edit,
             )),
         )
         .child(info_box(
@@ -1309,18 +1286,22 @@ fn package_step(state: &State, p: Paint) -> El {
         ));
     }
 
-    let mut signing_card = card(p, "签名方式", "发布包必须签名并加盖 RFC 3161 时间戳。")
-        .child(sign_modes)
-        .child(
-            text(state.sign_mode.description())
-                .font(CAPTION)
-                .color(p.muted),
-        );
+    let mut signing_card = card(
+        p,
+        "签名方式",
+        "正式发布建议配置代码签名和 RFC 3161 时间戳。",
+    )
+    .child(sign_modes)
+    .child(
+        text(state.sign_mode.description())
+            .font(CAPTION)
+            .color(p.muted),
+    );
     match state.sign_mode {
         SignMode::Unsigned => {
             signing_card = signing_card.child(warning_box(
                 p,
-                "开发模式：--unsigned 生成的安装器不能发布。",
+                "未配置签名：正式发布不推荐使用。",
                 p.warning,
             ));
         }
@@ -1375,8 +1356,8 @@ fn package_step(state: &State, p: Paint) -> El {
         .child(
             card(
                 p,
-                "Packager 与输出",
-                "packager 仍是最终 AIP 校验、签名与自解包验证的执行者。",
+                "打包器与输出",
+                "打包器负责最终 AIP 校验、签名和自解包验证。",
             )
             .child(path_field(
                 p,
@@ -1407,7 +1388,7 @@ fn package_step(state: &State, p: Paint) -> El {
                 p,
                 "toggle-force",
                 "覆盖已有输出",
-                "同名文件存在时允许 packager 原子替换。",
+                "同名文件存在时允许打包器原子替换。",
                 state.force_overwrite,
                 BoolField::Force,
             )),
@@ -1417,13 +1398,13 @@ fn package_step(state: &State, p: Paint) -> El {
             card(
                 p,
                 "签名细节",
-                "未填写 signtool 时，packager 会从 PATH 与 Windows SDK 查找。",
+                "未填写 signtool 时，会从 PATH 与 Windows SDK 查找。",
             )
             .child(field(
                 p,
                 "field-timestamp",
                 "RFC 3161 时间戳 URL",
-                "未签名开发构建不会使用此值",
+                "未配置签名时不会使用此值",
                 &state.timestamp_url_edit,
                 DEFAULT_TIMESTAMP_URL,
                 state
@@ -1449,44 +1430,13 @@ fn package_step(state: &State, p: Paint) -> El {
                 p,
                 "field-description",
                 "签名描述（可选）",
-                "留空时 packager 使用应用名称",
+                "留空时使用应用名称",
                 &state.description_edit,
                 "Anyinstaller package for Example App",
                 None,
                 |s| &mut s.description_edit,
             )),
         )
-}
-
-fn config_preview(state: &State, p: Paint) -> El {
-    let config = state.config_draft();
-    let background = if config.background.is_empty() {
-        "(默认白色)".to_string()
-    } else {
-        config.background.clone()
-    };
-    let name = truncate_text(&config.name, 42);
-    let location = truncate_text(&config.install_location, 54);
-    let lines = format!(
-        "protocol = 1\nname = \"{name}\"\nbackground = \"{background}\"\n\n[defaults]\ninstallLocation = \"{location}\"\ncreateStartMenuFolder = {}\ncreateDesktopShortcut = {}",
-        config.create_start_menu_folder, config.create_desktop_shortcut
-    );
-
-    col()
-        .w_full()
-        .gap(12.0)
-        .padding(18.0)
-        .radius(12.0)
-        .fill(p.log_bg)
-        .border(1.0, p.border)
-        .child(
-            row()
-                .justify_between()
-                .center_y()
-                .child(text("LIVE CONFIG PREVIEW").font(MONO_SMALL).color(p.accent))
-                .child(pill(p, "TOML", p.info)),
-        )
-        .child(text(lines).font(MONO).color(p.muted).wrap())
 }
 
 fn inspector(state: &State, p: Paint) -> El {
@@ -1523,7 +1473,7 @@ fn inspector(state: &State, p: Paint) -> El {
             LogKind::Error => "!",
         };
         logs = logs.child(
-            text(format!("{prefix} {}", line.text))
+            text(format!("{prefix} {}", i18n::tr(&line.text)))
                 .font(MONO_SMALL)
                 .color(color)
                 .wrap(),
@@ -1544,19 +1494,19 @@ fn inspector(state: &State, p: Paint) -> El {
     };
 
     col()
-        .w(332.0)
+        .w(304.0)
         .h_full()
-        .px(20.0)
-        .py(22.0)
-        .gap(14.0)
+        .px(16.0)
+        .py(16.0)
+        .gap(10.0)
         .fill(p.sidebar)
         .border_sides([1.0, 0.0, 0.0, 0.0], p.border)
         .child(
             row()
                 .justify_between()
                 .center_y()
-                .child(text("BUILD READOUT").font(MONO_SMALL).color(p.accent))
-                .child(text("LIVE").font(MONO_SMALL).color(p.faint)),
+                .child(text("构建状态").font(MONO_SMALL).color(p.accent))
+                .child(text("实时").font(MONO_SMALL).color(p.faint)),
         )
         .child(
             col()
@@ -1582,9 +1532,9 @@ fn inspector(state: &State, p: Paint) -> El {
                             .color(p.warning)
                         } else {
                             text(match state.phase {
-                                BuildPhase::Success => "OK",
-                                BuildPhase::Failure => "ERR",
-                                _ => "IDLE",
+                                BuildPhase::Success => "成功",
+                                BuildPhase::Failure => "失败",
+                                _ => "空闲",
                             })
                             .font(MONO)
                             .color(status_color)
@@ -1592,17 +1542,20 @@ fn inspector(state: &State, p: Paint) -> El {
                 )
                 .child(progress)
                 .child(metric(p, "输入", format!("{input_count} / 4")))
-                .child(metric(p, "签名", state.sign_mode.label().to_string()))
-                .child(metric(p, "校验", format!("{} 个问题", state.issues.len())))
+                .child(metric(
+                    p,
+                    "校验",
+                    format!("{} {}", state.issues.len(), i18n::tr("问题")),
+                ))
                 .child(text(output).font(MONO_SMALL).color(p.muted).wrap()),
         )
         .child(
             row()
                 .justify_between()
                 .center_y()
-                .child(text("PACKAGER LOG").font(MONO_SMALL).color(p.faint))
+                .child(text("打包日志").font(MONO_SMALL).color(p.faint))
                 .child(
-                    text(format!("{} LINES", state.logs.len()))
+                    text(format!("{} {}", state.logs.len(), i18n::tr("行")))
                         .font(MONO_SMALL)
                         .color(p.faint),
                 ),
@@ -1619,11 +1572,6 @@ fn inspector(state: &State, p: Paint) -> El {
                 .scroll(ScrollSpec::stick_bottom())
                 .child(logs),
         )
-        .child(if state.sign_mode == SignMode::Unsigned {
-            warning_box(p, "当前为未签名开发构建", p.warning)
-        } else {
-            info_box(p, "发布模式会执行签名与二次校验", p.success)
-        })
 }
 
 fn footer(state: &State, p: Paint) -> El {
@@ -1686,8 +1634,8 @@ fn footer(state: &State, p: Paint) -> El {
 
     row()
         .w_full()
-        .h(66.0)
-        .px(24.0)
+        .h(60.0)
+        .px(20.0)
         .gap(18.0)
         .justify_between()
         .center_y()
@@ -1733,9 +1681,9 @@ fn settings_footer(state: &State, p: Paint) -> El {
                 .child(button_tx(
                     p,
                     "settings-footer-back",
-                    "返回市场",
+                    "返回运行组件",
                     ButtonKind::Ghost,
-                    |s: &mut State, _tx| s.set_step(Step::Market),
+                    |s: &mut State, _tx| s.set_step(Step::Inputs),
                 ))
                 .child(button_tx(
                     p,
@@ -1757,16 +1705,16 @@ fn settings_footer(state: &State, p: Paint) -> El {
 fn card(p: Paint, title: &str, subtitle: &str) -> El {
     col()
         .w_full()
-        .gap(16.0)
-        .padding(20.0)
-        .radius(12.0)
+        .gap(12.0)
+        .padding(16.0)
+        .radius(10.0)
         .fill(p.surface)
         .border(1.0, p.border)
         .child(
             col()
                 .gap(3.0)
                 .child(text(title).font(CARD_TITLE).color(p.text))
-                .child(text(subtitle).font(CAPTION).color(p.muted)),
+                .child(text(subtitle).font(CAPTION).color(p.muted).wrap()),
         )
 }
 
@@ -1786,6 +1734,9 @@ fn field(
     } else {
         p.border_strong
     };
+    let label = i18n::tr(label);
+    let hint = i18n::tr(hint);
+    let placeholder = i18n::tr(placeholder);
     col()
         .w_full()
         .gap(7.0)
@@ -1793,7 +1744,7 @@ fn field(
             row()
                 .justify_between()
                 .center_y()
-                .child(text(label).font(LABEL).color(p.text))
+                .child(text(label.clone()).font(LABEL).color(p.text))
                 .child(if let Some(error) = error {
                     text(error).font(CAPTION).color(p.danger).truncate()
                 } else {
@@ -1803,7 +1754,7 @@ fn field(
         .child(
             text_input(edit, BODY)
                 .key(key)
-                .label(label)
+                .label(label.clone())
                 .single_line()
                 .w_full()
                 .h(40.0)
@@ -1838,6 +1789,9 @@ fn path_field(
     } else {
         p.border_strong
     };
+    let label = i18n::tr(label);
+    let hint = i18n::tr(hint);
+    let placeholder = i18n::tr(placeholder);
     let exists = path_exists(edit.text.trim());
     let status = if edit.text.trim().is_empty() {
         pill(p, "待选择", p.faint)
@@ -1852,13 +1806,13 @@ fn path_field(
     };
     let input = text_input(edit, BODY)
         .key(key)
-        .label(label)
+        .label(label.clone())
         .single_line()
         .grow(1.0)
         .min_w(0.0)
-        .h(40.0)
-        .px(12.0)
-        .py(10.0)
+        .h(36.0)
+        .px(10.0)
+        .py(8.0)
         .radius(8.0)
         .fill(p.field)
         .border(1.0, border)
@@ -1879,7 +1833,7 @@ fn path_field(
                     row()
                         .gap(8.0)
                         .center_y()
-                        .child(text(label).font(LABEL).color(p.text))
+                        .child(text(label.clone()).font(LABEL).color(p.text))
                         .child(status),
                 )
                 .child(if let Some(error) = error {
@@ -1921,9 +1875,10 @@ fn segment_tx(
     selected: bool,
     action: impl Fn(&mut State, &mut rune::Tx) + 'static,
 ) -> El {
+    let localized = i18n::tr(label);
     el().key(key)
         .role("segment")
-        .label(label)
+        .label(localized.clone())
         .checked(selected)
         .focusable(true)
         .h(32.0)
@@ -1946,7 +1901,7 @@ fn segment_tx(
         })
         .on_press_tx(action)
         .child(
-            text(label)
+            text(localized)
                 .font(BUTTON)
                 .color(if selected { p.accent } else { p.muted })
                 .a11y_hidden(),
@@ -1976,10 +1931,11 @@ fn switch_row(
                 .motion(motion::SNAPPY),
         )
         .a11y_hidden();
+    let localized = i18n::tr(label);
     row()
         .key(key)
         .role("switch")
-        .label(label)
+        .label(localized.clone())
         .checked(on)
         .focusable(true)
         .w_full()
@@ -1991,8 +1947,8 @@ fn switch_row(
             col()
                 .grow(1.0)
                 .gap(2.0)
-                .child(text(label).font(BODY_MEDIUM).color(p.text))
-                .child(text(description).font(CAPTION).color(p.muted)),
+                .child(text(localized).font(BODY_MEDIUM).color(p.text))
+                .child(text(description).font(CAPTION).color(p.muted).wrap()),
         )
         .child(control)
         .on_press_tx(move |s: &mut State, tx| match field {
@@ -2033,6 +1989,7 @@ fn button_tx(
 }
 
 fn button_base(p: Paint, key: &str, label: &str, kind: ButtonKind) -> El {
+    let localized = i18n::tr(label);
     let (fill, hover, press, ink, border) = match kind {
         ButtonKind::Primary => (
             p.accent,
@@ -2058,10 +2015,10 @@ fn button_base(p: Paint, key: &str, label: &str, kind: ButtonKind) -> El {
     };
     el().key(key)
         .role("button")
-        .label(label)
+        .label(localized.clone())
         .focusable(true)
-        .h(34.0)
-        .px(13.0)
+        .h(32.0)
+        .px(11.0)
         .center()
         .radius(8.0)
         .fill(fill)
@@ -2069,17 +2026,18 @@ fn button_base(p: Paint, key: &str, label: &str, kind: ButtonKind) -> El {
         .hover(hover)
         .press(press)
         .focus_ring(2.0, 1.0, p.accent)
-        .child(text(label).font(BUTTON).color(ink).a11y_hidden())
+        .child(text(localized).font(BUTTON).color(ink).a11y_hidden())
 }
 
 fn pill(p: Paint, label: &str, color: Color) -> El {
+    let localized = i18n::tr(label);
     el().h(21.0)
         .px(7.0)
         .center()
         .radius(10.0)
         .fill(p.surface_high)
         .border(1.0, color.alpha(0.24))
-        .child(text(label).font(MONO_SMALL).color(color))
+        .child(text(localized).font(MONO_SMALL).color(color))
 }
 
 fn metric(p: Paint, label: &str, value: String) -> El {
@@ -2134,16 +2092,6 @@ fn path_exists(value: &str) -> bool {
     !value.is_empty() && std::path::Path::new(value).exists()
 }
 
-fn truncate_text(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let shortened: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{shortened}…")
-    } else {
-        shortened
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2156,7 +2104,7 @@ mod tests {
                 step,
                 ..State::default()
             };
-            let mut runtime = Runtime::new(state, view, (1280.0, 800.0), Env::new(true, 1.0));
+            let mut runtime = Runtime::new(state, view, (1180.0, 760.0), Env::new(true, 1.0));
             runtime.frame(0.0);
             let key = format!("step-{}", step.index());
             assert!(runtime.find(&key).is_some());
@@ -2168,8 +2116,10 @@ mod tests {
         let state = State {
             step: Step::Settings,
             region_status: RegionStatus::Domestic {
+                ip: "198.51.100.8".into(),
                 country_code: "CN".into(),
                 country: "China".into(),
+                fallback: false,
             },
             ..State::default()
         };
@@ -2179,6 +2129,9 @@ mod tests {
         assert!(runtime.find("settings-accelerator-prefix").is_some());
         assert!(runtime.find("settings-auto-detect").is_some());
         assert!(runtime.find("settings-detect-workspace").is_some());
+        for code in ["en", "zh-cn", "hi", "es", "fr", "ar"] {
+            assert!(runtime.find(&format!("language-{code}")).is_some());
+        }
     }
 
     #[test]
@@ -2186,7 +2139,7 @@ mod tests {
         let mut runtime =
             Runtime::new(State::default(), view, (1280.0, 800.0), Env::new(true, 1.0));
         runtime.frame(0.0);
-        let (x, y) = runtime.find("step-3").unwrap();
+        let (x, y) = runtime.find("step-2").unwrap();
         runtime.pointer_down(x, y);
         runtime.pointer_up(x, y);
         runtime.frame(0.0);

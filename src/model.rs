@@ -2,34 +2,28 @@
 
 use std::path::PathBuf;
 
+use crate::i18n;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Step {
     #[default]
     App,
     Defaults,
-    Market,
     Inputs,
     Package,
     Settings,
 }
 
 impl Step {
-    pub const ALL: [Step; 5] = [
-        Step::App,
-        Step::Defaults,
-        Step::Market,
-        Step::Inputs,
-        Step::Package,
-    ];
+    pub const ALL: [Step; 4] = [Step::App, Step::Defaults, Step::Inputs, Step::Package];
 
     pub fn index(self) -> usize {
         match self {
             Step::App => 0,
             Step::Defaults => 1,
-            Step::Market => 2,
-            Step::Inputs => 3,
-            Step::Package => 4,
-            Step::Settings => 5,
+            Step::Inputs => 2,
+            Step::Package => 3,
+            Step::Settings => 4,
         }
     }
 
@@ -37,9 +31,8 @@ impl Step {
         match self {
             Step::App => "01",
             Step::Defaults => "02",
-            Step::Market => "03",
-            Step::Inputs => "04",
-            Step::Package => "05",
+            Step::Inputs => "03",
+            Step::Package => "04",
             Step::Settings => "S",
         }
     }
@@ -48,8 +41,7 @@ impl Step {
         match self {
             Step::App => "应用信息",
             Step::Defaults => "安装默认值",
-            Step::Market => "组件市场",
-            Step::Inputs => "构建输入",
+            Step::Inputs => "运行组件",
             Step::Package => "签名与打包",
             Step::Settings => "设置",
         }
@@ -59,8 +51,7 @@ impl Step {
         match self {
             Step::App => "身份与外观",
             Step::Defaults => "安装行为",
-            Step::Market => "官方与社区",
-            Step::Inputs => "组件与载荷",
+            Step::Inputs => "市场、载荷与资源",
             Step::Package => "证书与输出",
             Step::Settings => "网络与自动检测",
         }
@@ -70,8 +61,7 @@ impl Step {
         match self {
             Step::App => "编辑 AIP v1 的应用名称、图标与安装界面背景。",
             Step::Defaults => "设置安装器首次打开时的默认安装行为。",
-            Step::Market => "从 jsDelivr 目录浏览客户端、后端与 stub，并按 SHA-256 安全下载。",
-            Step::Inputs => "将 stub、client、backend、payload 与客户端资源整理进构建目录。",
+            Step::Inputs => "从市场下载或导入本机组件，并整理 payload 与客户端资源。",
             Step::Package => "选择签名方式、配置 packager，并输出最终单文件安装器。",
             Step::Settings => "管理 GitHub 加速、出口 IP 自动检测与本机组件定位。",
         }
@@ -80,8 +70,7 @@ impl Step {
     pub fn next(self) -> Option<Self> {
         match self {
             Step::App => Some(Step::Defaults),
-            Step::Defaults => Some(Step::Market),
-            Step::Market => Some(Step::Inputs),
+            Step::Defaults => Some(Step::Inputs),
             Step::Inputs => Some(Step::Package),
             Step::Package => None,
             Step::Settings => None,
@@ -92,8 +81,7 @@ impl Step {
         match self {
             Step::App => None,
             Step::Defaults => Some(Step::App),
-            Step::Market => Some(Step::Defaults),
-            Step::Inputs => Some(Step::Market),
+            Step::Inputs => Some(Step::Defaults),
             Step::Package => Some(Step::Inputs),
             Step::Settings => None,
         }
@@ -186,7 +174,7 @@ impl SignMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            SignMode::Unsigned => "开发未签名",
+            SignMode::Unsigned => "本地未签名",
             SignMode::Thumbprint => "证书存储",
             SignMode::Pfx => "PFX 文件",
         }
@@ -194,7 +182,7 @@ impl SignMode {
 
     pub fn description(self) -> &'static str {
         match self {
-            SignMode::Unsigned => "仅用于本地测试，AIP 发布包不得使用。",
+            SignMode::Unsigned => "适合本地调试；正式发布不推荐使用。",
             SignMode::Thumbprint => "使用当前用户证书存储中的 SHA-1 指纹。",
             SignMode::Pfx => "从 PFX 文件签名，密码通过环境变量传入。",
         }
@@ -207,30 +195,54 @@ pub enum RegionStatus {
     Unknown,
     Checking,
     Domestic {
+        ip: String,
         country_code: String,
         country: String,
+        fallback: bool,
     },
     Overseas {
+        ip: String,
         country_code: String,
         country: String,
     },
-    Failed(String),
 }
 
 impl RegionStatus {
     pub fn label(&self) -> String {
         match self {
-            RegionStatus::Unknown => "出口 IP 尚未检测".into(),
-            RegionStatus::Checking => "正在检测出口 IP...".into(),
+            RegionStatus::Unknown => i18n::tr("出口 IP 尚未检测"),
+            RegionStatus::Checking => i18n::tr("正在检测出口 IP..."),
             RegionStatus::Domestic {
+                ip,
                 country_code,
                 country,
-            } => format!("国内出口 · {country} ({country_code})"),
+                fallback,
+            } => {
+                if *fallback {
+                    format!("{} ({ip})", i18n::tr("无法访问 ipwho.is，按国内处理"))
+                } else {
+                    format!(
+                        "{} · {country} ({country_code}) · {ip}",
+                        i18n::tr("国内出口")
+                    )
+                }
+            }
             RegionStatus::Overseas {
+                ip,
                 country_code,
                 country,
-            } => format!("海外出口 · {country} ({country_code})"),
-            RegionStatus::Failed(error) => format!("检测失败：{error}"),
+            } => format!(
+                "{} · {country} ({country_code}) · {ip}",
+                i18n::tr("海外出口")
+            ),
+        }
+    }
+
+    pub fn ip(&self) -> String {
+        match self {
+            RegionStatus::Domestic { ip, .. } | RegionStatus::Overseas { ip, .. } => ip.clone(),
+            RegionStatus::Unknown => i18n::tr("尚未检测"),
+            RegionStatus::Checking => i18n::tr("检测中"),
         }
     }
 }
@@ -318,6 +330,7 @@ pub enum PathTarget {
     Output,
     Icon,
     Background,
+    ImportCustomComponent,
     Pfx,
     Signtool,
 }

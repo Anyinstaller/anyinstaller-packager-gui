@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::Language;
 use crate::market::DEFAULT_GITHUB_ACCELERATOR;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiSettings {
+    pub language: Language,
     pub github_acceleration: GithubAccelerationSettings,
 }
 
@@ -60,5 +62,25 @@ pub fn data_root() -> PathBuf {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(".anyinstaller-packager-gui")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_round_trip_preserves_language_and_acceleration() {
+        let settings = GuiSettings {
+            language: Language::Ar,
+            github_acceleration: GithubAccelerationSettings {
+                enabled: true,
+                prefix: "https://gh.meali.top/".into(),
+            },
+        };
+        let text = toml::to_string_pretty(&settings).unwrap();
+        let parsed: GuiSettings = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.language, Language::Ar);
+        assert!(parsed.github_acceleration.enabled);
     }
 }

@@ -83,8 +83,8 @@ pub enum ComponentKind {
 impl ComponentKind {
     pub fn label(self) -> &'static str {
         match self {
-            ComponentKind::Client => "CLIENT",
-            ComponentKind::Backend => "BACKEND",
+            ComponentKind::Client => "客户端",
+            ComponentKind::Backend => "后端",
             ComponentKind::Stub => "STUB",
         }
     }
@@ -92,9 +92,11 @@ impl ComponentKind {
 
 #[derive(Clone, Debug)]
 pub struct RegionInfo {
+    pub ip: String,
     pub country_code: String,
     pub country: String,
     pub domestic: bool,
+    pub fallback: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -109,7 +111,6 @@ pub enum MarketEvent {
     CatalogLoaded(Catalog),
     CatalogFailed(String),
     RegionLoaded(RegionInfo),
-    RegionFailed(String),
     DownloadMessage {
         component_id: String,
         message: String,
@@ -129,6 +130,8 @@ pub enum MarketEvent {
 #[derive(Deserialize)]
 struct RegionResponse {
     success: bool,
+    #[serde(default)]
+    ip: String,
     #[serde(default)]
     country_code: String,
     #[serde(default)]
@@ -150,11 +153,10 @@ pub fn start_catalog_refresh(sender: Sender<MarketEvent>, wake: Waker) {
 
 pub fn start_region_check(sender: Sender<MarketEvent>, wake: Waker) {
     std::thread::spawn(move || {
-        let result = fetch_region();
-        let event = match result {
-            Ok(region) => MarketEvent::RegionLoaded(region),
-            Err(error) => MarketEvent::RegionFailed(format!("{error:#}")),
-        };
+        let event = MarketEvent::RegionLoaded(match fetch_region() {
+            Ok(region) => region,
+            Err(error) => fallback_region(&format!("{error:#}")),
+        });
         send(&sender, &wake, event);
     });
 }
@@ -222,10 +224,26 @@ pub fn fetch_region() -> Result<RegionInfo> {
     }
     let country_code = response.country_code.to_ascii_uppercase();
     Ok(RegionInfo {
+        ip: if response.ip.is_empty() {
+            "未知".into()
+        } else {
+            response.ip
+        },
         domestic: country_code == "CN",
         country_code,
         country: response.country,
+        fallback: false,
     })
+}
+
+fn fallback_region(error: &str) -> RegionInfo {
+    RegionInfo {
+        ip: "不可用".into(),
+        country_code: "CN".into(),
+        country: format!("ipwho.is 请求失败：{error}"),
+        domestic: true,
+        fallback: true,
+    }
 }
 
 pub fn normalize_accelerator_prefix(value: &str) -> Result<String> {
@@ -766,6 +784,7 @@ mod tests {
     fn detects_exit_region_from_ipwho() {
         let region = fetch_region().unwrap();
         assert!(!region.country_code.is_empty());
+        assert!(!region.ip.is_empty());
         assert_eq!(region.domestic, region.country_code == "CN");
     }
 
@@ -813,6 +832,14 @@ mod tests {
         let mut component = component();
         component.version = "../escape".into();
         assert!(validate_component(&component).is_err());
+    }
+
+    #[test]
+    fn ipwho_failure_defaults_to_domestic() {
+        let region = fallback_region("offline");
+        assert!(region.domestic);
+        assert!(region.fallback);
+        assert_eq!(region.country_code, "CN");
     }
 
     #[test]

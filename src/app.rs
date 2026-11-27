@@ -12,6 +12,7 @@ use crate::build_job::{
 };
 use crate::config_file::{self, ConfigDraft, LoadedConfig};
 use crate::detect;
+use crate::i18n::Language;
 use crate::market::{self, Catalog, Component, InstalledComponent, MarketEvent, RegionInfo};
 use crate::model::{
     BackgroundMaterial, BackgroundMode, BuildPhase, Notice, NoticeTone, PathTarget, RegionStatus,
@@ -32,6 +33,7 @@ pub struct MarketDownload {
 
 pub struct State {
     pub step: Step,
+    pub language: Language,
     pub name_edit: TextEdit,
     pub icon_edit: TextEdit,
     pub background_mode: BackgroundMode,
@@ -85,7 +87,6 @@ pub struct State {
     pub market_receiver: Option<Receiver<MarketEvent>>,
     pub market_download: Option<MarketDownload>,
     pub installed_market: Vec<InstalledComponent>,
-    pub apply_region_default: bool,
 
     pub waker: Option<Waker>,
 }
@@ -94,6 +95,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             step: Step::App,
+            language: Language::default(),
             name_edit: TextEdit::new("Example App"),
             icon_edit: TextEdit::default(),
             background_mode: BackgroundMode::Default,
@@ -155,7 +157,6 @@ impl Default for State {
             market_receiver: None,
             market_download: None,
             installed_market: Vec::new(),
-            apply_region_default: false,
 
             waker: None,
         }
@@ -164,15 +165,14 @@ impl Default for State {
 
 pub fn init() -> State {
     let mut state = State::default();
-    let settings_existed = settings::settings_path().exists();
     let saved = settings::load();
+    state.language = saved.language;
     state.accelerator_enabled = saved.github_acceleration.enabled;
     if !saved.github_acceleration.prefix.trim().is_empty() {
         state
             .accelerator_prefix_edit
             .replace_text(saved.github_acceleration.prefix);
     }
-    state.apply_region_default = !settings_existed;
     state.auto_detect(None);
     state
 }
@@ -286,10 +286,6 @@ fn apply_market_event(state: &mut State, event: MarketEvent, tx: &mut Tx) {
         MarketEvent::RegionLoaded(region) => {
             apply_region_info(state, region);
         }
-        MarketEvent::RegionFailed(error) => {
-            state.region_status = RegionStatus::Failed(error.clone());
-            state.notify(format!("出口 IP 检测失败：{error}"), NoticeTone::Warning);
-        }
         MarketEvent::DownloadMessage {
             component_id,
             message,
@@ -344,36 +340,29 @@ fn apply_market_event(state: &mut State, event: MarketEvent, tx: &mut Tx) {
 fn apply_region_info(state: &mut State, region: RegionInfo) {
     state.region_status = if region.domestic {
         RegionStatus::Domestic {
+            ip: region.ip.clone(),
             country_code: region.country_code.clone(),
             country: region.country.clone(),
+            fallback: region.fallback,
         }
     } else {
         RegionStatus::Overseas {
+            ip: region.ip.clone(),
             country_code: region.country_code.clone(),
             country: region.country.clone(),
         }
     };
-    if state.apply_region_default {
-        state.accelerator_enabled = region.domestic;
-        state.apply_region_default = false;
-        state.persist_acceleration_settings();
-    }
+    state.accelerator_enabled = region.domestic;
+    let _ = state.persist_acceleration_settings();
     state.notify(
         if region.domestic {
-            format!(
-                "检测到国内出口（{}），GitHub 加速已{}。",
-                region.country_code,
-                if state.accelerator_enabled {
-                    "启用"
-                } else {
-                    "保持关闭"
-                }
-            )
+            if region.fallback {
+                "无法访问 ipwho.is，已按国内出口处理并自动启用加速。".into()
+            } else {
+                format!("检测到国内出口 {}，已自动启用 GitHub 加速。", region.ip)
+            }
         } else {
-            format!(
-                "检测到海外出口（{}），继续使用 GitHub 直连。",
-                region.country_code
-            )
+            format!("检测到海外出口 {}，已自动关闭 GitHub 加速。", region.ip)
         },
         NoticeTone::Info,
     );
@@ -539,7 +528,13 @@ impl State {
 
     pub fn check_region(&mut self) {
         let Some(waker) = self.waker.clone() else {
-            self.region_status = RegionStatus::Failed("Rune 运行时尚未就绪".into());
+            self.region_status = RegionStatus::Domestic {
+                ip: "不可用".into(),
+                country_code: "CN".into(),
+                country: "Rune 运行时尚未就绪，默认国内".into(),
+                fallback: true,
+            };
+            self.accelerator_enabled = true;
             return;
         };
         let sender = self.ensure_market_channel();
@@ -551,6 +546,19 @@ impl State {
         GithubAccelerationSettings {
             enabled: self.accelerator_enabled,
             prefix: self.accelerator_prefix_edit.text.trim().to_string(),
+        }
+    }
+
+    pub fn set_language(&mut self, language: Language, _tx: &mut Tx) {
+        if self.language == language {
+            return;
+        }
+        self.language = language;
+        if self.persist_acceleration_settings() {
+            self.notify(
+                crate::i18n::tr_lang("界面语言已切换。", language),
+                NoticeTone::Success,
+            );
         }
     }
 
@@ -570,14 +578,14 @@ impl State {
             }
         }
         self.accelerator_enabled = enable;
-        self.persist_acceleration_settings();
+        let _ = self.persist_acceleration_settings();
     }
 
     pub fn save_acceleration(&mut self, _tx: &mut Tx) {
-        self.persist_acceleration_settings();
+        let _ = self.persist_acceleration_settings();
     }
 
-    fn persist_acceleration_settings(&mut self) {
+    fn persist_acceleration_settings(&mut self) -> bool {
         match market::normalize_accelerator_prefix(&self.accelerator_prefix_edit.text) {
             Ok(prefix) => {
                 self.accelerator_prefix_edit.replace_text(prefix);
@@ -586,23 +594,25 @@ impl State {
             Err(error) => {
                 self.accelerator_error = Some(error.to_string());
                 self.notify(error.to_string(), NoticeTone::Error);
-                return;
+                return false;
             }
         }
         let settings = GuiSettings {
+            language: self.language,
             github_acceleration: self.acceleration_settings(),
         };
         match settings::save(&settings) {
             Ok(path) => {
-                self.apply_region_default = false;
                 self.notify(
                     format!("GitHub 加速设置已保存：{}", path.display()),
                     NoticeTone::Success,
                 );
+                true
             }
             Err(error) => {
                 self.accelerator_error = Some(format!("{error:#}"));
                 self.notify(format!("保存加速设置失败：{error:#}"), NoticeTone::Error);
+                false
             }
         }
     }
@@ -680,10 +690,7 @@ impl State {
 
     pub fn open_settings(&mut self) {
         self.step = Step::Settings;
-        if matches!(
-            self.region_status,
-            RegionStatus::Unknown | RegionStatus::Failed(_)
-        ) {
+        if matches!(self.region_status, RegionStatus::Unknown) {
             self.check_region();
         }
         if self.catalog.is_none() && !self.catalog_loading {
@@ -871,7 +878,7 @@ impl State {
     pub fn browse(&mut self, tx: &mut Tx, target: PathTarget) {
         let start = self.dialog_directory(target);
         let mut options = FileDialogOptions {
-            title: picker_title(target).into(),
+            title: crate::i18n::tr(picker_title(target)),
             directory: start,
             file_name: None,
             filters: Vec::new(),
@@ -879,36 +886,43 @@ impl State {
         match target {
             PathTarget::LoadConfig => {
                 options.file_name = Some("config.toml".into());
-                options = options.filter("AIP config", &["toml"]);
+                options = options.filter(crate::i18n::tr("AIP 配置"), &["toml"]);
             }
             PathTarget::SaveConfigAs => {
                 options.file_name = Some("config.toml".into());
                 options = options.filter("AIP config", &["toml"]);
             }
             PathTarget::Stub | PathTarget::Client | PathTarget::Backend | PathTarget::Packager => {
-                options = options.filter("Windows executable", &["exe"]);
+                options = options.filter(crate::i18n::tr("Windows 可执行文件"), &["exe"]);
             }
-            PathTarget::Payload => options = options.filter("ZIP payload", &["zip"]),
+            PathTarget::Payload => options = options.filter(crate::i18n::tr("ZIP 载荷"), &["zip"]),
             PathTarget::Output => {
                 options.file_name = Some("Setup.exe".into());
                 options = options.filter("Windows executable", &["exe"]);
             }
             PathTarget::Icon => {
-                options = options.filter("Icon", &["ico", "png", "webp", "avif", "jpg", "jpeg"]);
+                options = options.filter(
+                    crate::i18n::tr("图标"),
+                    &["ico", "png", "webp", "avif", "jpg", "jpeg"],
+                );
             }
             PathTarget::Background => {
-                options = options.filter("Image", &["png", "webp", "avif", "jpg", "jpeg"]);
+                options = options.filter(
+                    crate::i18n::tr("背景图片"),
+                    &["png", "webp", "avif", "jpg", "jpeg"],
+                );
             }
-            PathTarget::Pfx => options = options.filter("PFX certificate", &["pfx"]),
+            PathTarget::Pfx => options = options.filter(crate::i18n::tr("PFX 证书"), &["pfx"]),
             PathTarget::Signtool => {
                 options.file_name = Some("signtool.exe".into());
                 options = options.filter("Windows executable", &["exe"]);
             }
-            PathTarget::BuildDir | PathTarget::ClientAssets => {}
+            PathTarget::BuildDir | PathTarget::ClientAssets | PathTarget::ImportCustomComponent => {
+            }
         }
 
         match target {
-            PathTarget::BuildDir | PathTarget::ClientAssets => {
+            PathTarget::BuildDir | PathTarget::ClientAssets | PathTarget::ImportCustomComponent => {
                 tx.open_folder(options, move |state: &mut State, result, tx| {
                     answer_picker(state, target, result, tx);
                 });
@@ -926,10 +940,49 @@ impl State {
         }
     }
 
+    fn import_custom_component(&mut self, path: &Path, tx: &mut Tx) -> Result<()> {
+        if !path.is_dir() {
+            anyhow::bail!("请选择包含运行组件的文件夹");
+        }
+        let client = path.join("client.exe");
+        let backend = path.join("backend.exe");
+        let stub = path.join("stub.exe");
+        let assets = path.join("assets");
+        let mut imported = Vec::new();
+        if client.is_file() {
+            set_edit_path(&mut self.client_edit, &client);
+            if assets.is_dir() {
+                set_edit_path(&mut self.client_assets_edit, &assets);
+            }
+            imported.push("client");
+        }
+        if backend.is_file() {
+            set_edit_path(&mut self.backend_edit, &backend);
+            imported.push("backend");
+        }
+        if stub.is_file() {
+            set_edit_path(&mut self.stub_edit, &stub);
+            imported.push("stub");
+        }
+        if imported.is_empty() {
+            anyhow::bail!("目录中没有 client.exe、backend.exe 或 stub.exe");
+        }
+        self.mark_dirty(tx);
+        self.notify(
+            format!("已导入自定义组件：{}", imported.join("、")),
+            NoticeTone::Success,
+        );
+        Ok(())
+    }
+
     fn accept_path(&mut self, target: PathTarget, path: &Path, tx: &mut Tx) -> Result<()> {
         match target {
             PathTarget::LoadConfig => {
                 self.load_config_from(path, tx)?;
+                return Ok(());
+            }
+            PathTarget::ImportCustomComponent => {
+                self.import_custom_component(path, tx)?;
                 return Ok(());
             }
             PathTarget::SaveConfigAs => {
@@ -973,9 +1026,10 @@ impl State {
 
     fn dialog_directory(&self, target: PathTarget) -> Option<PathBuf> {
         let current = match target {
-            PathTarget::LoadConfig | PathTarget::SaveConfigAs | PathTarget::BuildDir => {
-                validation::path_from_edit(&self.build_dir_edit)
-            }
+            PathTarget::LoadConfig
+            | PathTarget::SaveConfigAs
+            | PathTarget::BuildDir
+            | PathTarget::ImportCustomComponent => validation::path_from_edit(&self.build_dir_edit),
             PathTarget::Stub => validation::path_from_edit(&self.stub_edit),
             PathTarget::Client => validation::path_from_edit(&self.client_edit),
             PathTarget::Backend => validation::path_from_edit(&self.backend_edit),
@@ -1055,6 +1109,7 @@ fn picker_title(target: PathTarget) -> &'static str {
         PathTarget::Backend => "选择 backend.exe",
         PathTarget::Payload => "选择 payload.zip",
         PathTarget::ClientAssets => "选择客户端 assets 目录",
+        PathTarget::ImportCustomComponent => "导入自定义运行组件目录",
         PathTarget::Packager => "选择 packager.exe",
         PathTarget::Output => "选择安装器输出位置",
         PathTarget::Icon => "选择应用图标",
