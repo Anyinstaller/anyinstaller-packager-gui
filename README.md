@@ -2,7 +2,7 @@
 
 基于 [Rune](https://github.com/anomalyco/rune) 的 Anyinstaller AIP v1 打包工作台。它把配置编辑、输入文件整理、签名选项、调用官方 packager 和实时日志放在同一个桌面界面里。
 
-- Release：<https://github.com/Anyinstaller/anyinstaller-packager-gui/releases/tag/v0.2.0>
+- Release：<https://github.com/Anyinstaller/anyinstaller-packager-gui/releases/tag/v0.2.1>
 - 市场目录：<https://cdn.jsdelivr.net/gh/Anyinstaller/client-backend-marketplace@main/catalog.toml>
 
 > 协议规范位于同工作区的 `aip/` 仓库。GUI 只编辑 AIP v1 已定义字段；最终校验、签名和自解包验证仍由 `packager.exe` 完成。
