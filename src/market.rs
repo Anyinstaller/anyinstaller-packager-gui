@@ -53,11 +53,9 @@ pub struct Component {
     pub id: String,
     pub name: String,
     pub kind: ComponentKind,
-    pub version: String,
     pub repository: String,
-    pub release_tag: String,
     pub asset: String,
-    pub sha256: String,
+    pub checksum_asset: String,
     pub license: String,
     #[serde(default)]
     pub homepage: String,
@@ -265,9 +263,13 @@ pub fn normalize_accelerator_prefix(value: &str) -> Result<String> {
 }
 
 pub fn direct_release_url(component: &Component) -> String {
+    direct_asset_url(component, &component.asset)
+}
+
+fn direct_asset_url(component: &Component, asset: &str) -> String {
     format!(
-        "https://github.com/{}/releases/download/{}/{}",
-        component.repository, component.release_tag, component.asset
+        "https://github.com/{}/releases/latest/download/{}",
+        component.repository, asset
     )
 }
 
@@ -275,7 +277,15 @@ pub fn download_urls(
     component: &Component,
     acceleration: &GithubAccelerationSettings,
 ) -> Result<Vec<String>> {
-    let direct = direct_release_url(component);
+    asset_urls(component, &component.asset, acceleration)
+}
+
+fn asset_urls(
+    component: &Component,
+    asset: &str,
+    acceleration: &GithubAccelerationSettings,
+) -> Result<Vec<String>> {
+    let direct = direct_asset_url(component, asset);
     if !acceleration.enabled {
         return Ok(vec![direct]);
     }
@@ -284,7 +294,28 @@ pub fn download_urls(
 }
 
 pub fn installed_component(component: &Component) -> Option<InstalledComponent> {
-    let root = final_install_dir(component)?;
+    let root = cache_root().join(&component.id);
+    let entries = std::fs::read_dir(root).ok()?;
+    for entry in entries.flatten() {
+        if !entry.file_type().ok()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("latest-") {
+            continue;
+        }
+        if let Some(installed) = installed_component_in(component, entry.path()) {
+            return Some(installed);
+        }
+    }
+    None
+}
+
+fn installed_component_for_hash(component: &Component, sha256: &str) -> Option<InstalledComponent> {
+    installed_component_in(component, final_install_dir(component, sha256)?)
+}
+
+fn installed_component_in(component: &Component, root: PathBuf) -> Option<InstalledComponent> {
     let executable = root.join(component.executable.replace('\\', "/"));
     if !executable.is_file() {
         return None;
@@ -309,13 +340,23 @@ fn download_and_install(
     sender: &Sender<MarketEvent>,
     wake: &Waker,
 ) -> Result<InstalledComponent> {
-    if let Some(existing) = installed_component(component) {
+    let agent = http_agent(Duration::from_secs(300));
+    send(
+        sender,
+        wake,
+        MarketEvent::DownloadMessage {
+            component_id: component.id.clone(),
+            message: "正在读取最新 Release 的 SHA-256...".into(),
+        },
+    );
+    let sha256 = fetch_latest_checksum(component, acceleration, &agent)?;
+    if let Some(existing) = installed_component_for_hash(component, &sha256) {
         send(
             sender,
             wake,
             MarketEvent::DownloadMessage {
                 component_id: component.id.clone(),
-                message: "已存在经过校验的缓存，直接复用。".into(),
+                message: "已存在与最新 Release 匹配的缓存，直接复用。".into(),
             },
         );
         return Ok(existing);
@@ -334,7 +375,6 @@ fn download_and_install(
     );
     let zip_path = cache.join(format!(".download-{stamp}.zip"));
     let urls = download_urls(component, acceleration)?;
-    let agent = http_agent(Duration::from_secs(300));
     let mut last_error = None;
 
     for url in urls {
@@ -352,7 +392,7 @@ fn download_and_install(
             },
         );
         match download_to_file(&agent, &url, &zip_path, component, sender, wake) {
-            Ok(()) => match verify_sha256(&zip_path, &component.sha256) {
+            Ok(()) => match verify_sha256(&zip_path, &sha256) {
                 Ok(()) => {
                     last_error = None;
                     break;
@@ -393,7 +433,7 @@ fn download_and_install(
         return Err(error);
     }
 
-    let final_dir = final_install_dir(component).context("组件缓存路径无效")?;
+    let final_dir = final_install_dir(component, &sha256).context("组件缓存路径无效")?;
     if !final_dir.exists() {
         let extract_dir = cache.join(format!(".extract-{stamp}"));
         extract_zip(&zip_path, &extract_dir)?;
@@ -414,7 +454,58 @@ fn download_and_install(
             .with_context(|| format!("无法提交组件缓存：{}", final_dir.display()))?;
     }
     let _ = std::fs::remove_file(&zip_path);
-    installed_component(component).context("组件已下载但没有找到可执行文件")
+    installed_component_for_hash(component, &sha256).context("组件已下载但没有找到可执行文件")
+}
+
+fn fetch_latest_checksum(
+    component: &Component,
+    acceleration: &GithubAccelerationSettings,
+    agent: &ureq::Agent,
+) -> Result<String> {
+    let urls = asset_urls(component, &component.checksum_asset, acceleration)?;
+    let mut last_error = None;
+    for url in urls {
+        let result = (|| -> Result<String> {
+            let mut response = agent
+                .get(&url)
+                .header("Accept", "text/plain,application/octet-stream")
+                .call()
+                .with_context(|| format!("无法读取最新 Release 校验文件：{url}"))?;
+            let text = response
+                .body_mut()
+                .with_config()
+                .limit(64 * 1024)
+                .read_to_string()
+                .context("读取 Release 校验文件失败")?;
+            parse_checksum_asset(&text, &component.asset)
+        })();
+        match result {
+            Ok(hash) => return Ok(hash),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("无法获取 SHA-256 校验文件")))
+}
+
+fn parse_checksum_asset(text: &str, asset: &str) -> Result<String> {
+    for line in text.lines() {
+        let mut fields = line.split_whitespace();
+        let Some(hash) = fields.next() else {
+            continue;
+        };
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        let name = name.trim_start_matches('*').trim_start_matches("./");
+        if name != asset {
+            continue;
+        }
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            bail!("校验文件中的 SHA-256 无效：{hash}");
+        }
+        return Ok(hash.to_ascii_lowercase());
+    }
+    bail!("校验文件中没有找到 {asset}")
 }
 
 fn download_to_file(
@@ -588,24 +679,15 @@ fn validate_catalog(catalog: &Catalog) -> Result<()> {
 
 fn validate_component(component: &Component) -> Result<()> {
     validate_id(&component.id, "component.id")?;
-    if component.name.trim().is_empty() || component.version.trim().is_empty() {
-        bail!("组件 {} 缺少 name 或 version", component.id);
+    if component.name.trim().is_empty() {
+        bail!("组件 {} 缺少 name", component.id);
     }
-    validate_release_part(&component.version, "version")?;
     validate_repository(&component.repository)?;
     if !component.source_repository.is_empty() {
         validate_repository(&component.source_repository)?;
     }
-    validate_release_part(&component.release_tag, "release_tag")?;
     validate_release_part(&component.asset, "asset")?;
-    if component.sha256.len() != 64
-        || !component
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        bail!("组件 {} 的 sha256 无效", component.id);
-    }
+    validate_release_part(&component.checksum_asset, "checksum_asset")?;
     if component.license.trim().is_empty()
         || component.license.len() > 80
         || component.license.chars().any(char::is_control)
@@ -701,10 +783,9 @@ fn http_agent(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
-fn final_install_dir(component: &Component) -> Option<PathBuf> {
+fn final_install_dir(component: &Component, sha256: &str) -> Option<PathBuf> {
     if component.id.is_empty()
-        || component.version.is_empty()
-        || component.sha256.len() < 8
+        || sha256.len() < 8
         || !component
             .id
             .bytes()
@@ -712,11 +793,11 @@ fn final_install_dir(component: &Component) -> Option<PathBuf> {
     {
         return None;
     }
-    Some(cache_root().join(&component.id).join(format!(
-        "{}-{}",
-        component.version,
-        component.sha256[..8].to_ascii_lowercase()
-    )))
+    Some(
+        cache_root()
+            .join(&component.id)
+            .join(format!("latest-{}", sha256[..8].to_ascii_lowercase())),
+    )
 }
 
 pub fn cache_root() -> PathBuf {
@@ -738,11 +819,9 @@ mod tests {
             id: "official-test".into(),
             name: "Test".into(),
             kind: ComponentKind::Backend,
-            version: "1.0.0".into(),
-            repository: "Anyinstaller/client-backend-marketplace".into(),
-            release_tag: "components-v1.0.0".into(),
+            repository: "Anyinstaller/voidbackend".into(),
             asset: "backend-windows-x64.zip".into(),
-            sha256: "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF".into(),
+            checksum_asset: "SHA256SUMS.txt".into(),
             license: "MPL-2.0".into(),
             homepage: "https://github.com/Anyinstaller/voidbackend".into(),
             source_repository: "Anyinstaller/voidbackend".into(),
@@ -767,7 +846,7 @@ mod tests {
         assert_eq!(urls.len(), 2);
         assert_eq!(
             urls[0],
-            "https://gh.meali.top/https://github.com/Anyinstaller/client-backend-marketplace/releases/download/components-v1.0.0/backend-windows-x64.zip"
+            "https://gh.meali.top/https://github.com/Anyinstaller/voidbackend/releases/latest/download/backend-windows-x64.zip"
         );
         assert!(urls[1].starts_with("https://github.com/"));
     }
@@ -820,17 +899,21 @@ mod tests {
         let catalog: Catalog = toml::from_str(&text).unwrap();
         validate_catalog(&catalog).unwrap();
         for component in &catalog.components {
-            let asset = Path::new("../client-backend-marketplace/dist").join(&component.asset);
-            if asset.is_file() {
-                verify_sha256(&asset, &component.sha256).unwrap();
+            let dist = Path::new("../client-backend-marketplace/dist");
+            let checksum = dist.join(&component.checksum_asset);
+            let asset = dist.join(&component.asset);
+            if checksum.is_file() && asset.is_file() {
+                let text = std::fs::read_to_string(checksum).unwrap();
+                let hash = parse_checksum_asset(&text, &component.asset).unwrap();
+                verify_sha256(&asset, &hash).unwrap();
             }
         }
     }
 
     #[test]
-    fn rejects_path_traversal_in_component_version() {
+    fn rejects_path_traversal_in_component_id() {
         let mut component = component();
-        component.version = "../escape".into();
+        component.id = "../escape".into();
         assert!(validate_component(&component).is_err());
     }
 
@@ -840,6 +923,16 @@ mod tests {
         assert!(region.domestic);
         assert!(region.fallback);
         assert_eq!(region.country_code, "CN");
+    }
+
+    #[test]
+    fn parses_latest_release_checksum_file() {
+        let hash = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
+        let text = format!("{hash}  backend-windows-x64.zip\n");
+        assert_eq!(
+            parse_checksum_asset(&text, "backend-windows-x64.zip").unwrap(),
+            hash.to_ascii_lowercase()
+        );
     }
 
     #[test]

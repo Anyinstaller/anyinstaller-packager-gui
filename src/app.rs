@@ -643,7 +643,7 @@ impl State {
             total: None,
         });
         self.notify(
-            format!("开始下载 {} {}...", component.name, component.version),
+            format!("开始下载 {}（最新 Release）...", component.name),
             NoticeTone::Info,
         );
         market::start_download(component, self.acceleration_settings(), sender, waker);
@@ -680,10 +680,7 @@ impl State {
         }
         self.mark_dirty(tx);
         self.notify(
-            format!(
-                "已应用市场组件：{} {}",
-                installed.component.name, installed.component.version
-            ),
+            format!("已应用市场组件：{}", installed.component.name),
             NoticeTone::Success,
         );
     }

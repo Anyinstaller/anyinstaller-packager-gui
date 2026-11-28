@@ -971,7 +971,7 @@ fn component_card(
                         .grow(1.0)
                         .truncate(),
                 )
-                .child(pill(p, &format!("v{}", component.version), p.info))
+                .child(pill(p, "最新 Release", p.info))
                 .child(pill(p, component.kind.label(), kind_color))
                 .child(pill(p, &component.license, p.success))
                 .child(if component.official {
