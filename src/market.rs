@@ -276,8 +276,15 @@ fn direct_asset_url(component: &Component, asset: &str) -> String {
 pub fn download_urls(
     component: &Component,
     acceleration: &GithubAccelerationSettings,
+    sha256: &str,
 ) -> Result<Vec<String>> {
-    asset_urls(component, &component.asset, acceleration)
+    let direct = direct_release_url(component);
+    if !acceleration.enabled {
+        return Ok(vec![direct]);
+    }
+    let prefix = normalize_accelerator_prefix(&acceleration.prefix)?;
+    let token = sha256.get(..12).unwrap_or(sha256);
+    Ok(vec![format!("{prefix}{direct}?v={token}"), direct])
 }
 
 fn asset_urls(
@@ -374,7 +381,7 @@ fn download_and_install(
             .as_millis()
     );
     let zip_path = cache.join(format!(".download-{stamp}.zip"));
-    let urls = download_urls(component, acceleration)?;
+    let urls = download_urls(component, acceleration, &sha256)?;
     let mut last_error = None;
 
     for url in urls {
@@ -462,7 +469,10 @@ fn fetch_latest_checksum(
     acceleration: &GithubAccelerationSettings,
     agent: &ureq::Agent,
 ) -> Result<String> {
-    let urls = asset_urls(component, &component.checksum_asset, acceleration)?;
+    let mut urls = asset_urls(component, &component.checksum_asset, acceleration)?;
+    if urls.len() > 1 {
+        urls.reverse();
+    }
     let mut last_error = None;
     for url in urls {
         let result = (|| -> Result<String> {
@@ -841,19 +851,25 @@ mod tests {
                 enabled: true,
                 prefix: "https://gh.meali.top".into(),
             },
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         )
         .unwrap();
         assert_eq!(urls.len(), 2);
         assert_eq!(
             urls[0],
-            "https://gh.meali.top/https://github.com/Anyinstaller/voidbackend/releases/latest/download/backend-windows-x64.zip"
+            "https://gh.meali.top/https://github.com/Anyinstaller/voidbackend/releases/latest/download/backend-windows-x64.zip?v=0123456789ab"
         );
         assert!(urls[1].starts_with("https://github.com/"));
     }
 
     #[test]
     fn disabled_acceleration_uses_direct_url_only() {
-        let urls = download_urls(&component(), &GithubAccelerationSettings::default()).unwrap();
+        let urls = download_urls(
+            &component(),
+            &GithubAccelerationSettings::default(),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        )
+        .unwrap();
         assert_eq!(urls.len(), 1);
         assert!(urls[0].starts_with("https://github.com/"));
     }
